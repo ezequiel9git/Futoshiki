@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { generateGame, checkConstraints, isSolved } from './futoshiki';
 
 const DIFFICULTY_LABELS = { easy: 'Fácil', medium: 'Medio', hard: 'Difícil' };
+const DIFFICULTY_DESC   = { easy: '4 × 4', medium: '5 × 5', hard: '6 × 6' };
 
 function useTimer(running) {
   const [seconds, setSeconds] = useState(0);
@@ -16,27 +17,35 @@ function useTimer(running) {
 }
 
 export default function Game() {
-  const [difficulty, setDifficulty] = useState('easy');
-  const [game, setGame] = useState(() => generateGame('easy'));
-  const [board, setBoard] = useState(() => generateGame('easy').puzzle.map(r => [...r]));
-  const [selected, setSelected] = useState(null);
-  const [errors, setErrors] = useState(new Set());
-  const [solved, setSolved] = useState(false);
-  const [mistakes, setMistakes] = useState(0);
-  const [timerRunning, setTimerRunning] = useState(true);
-  const { display: timerDisplay, reset: resetTimer } = useTimer(timerRunning && !solved);
+  const [difficulty, setDifficulty]   = useState('easy');
+  const [game, setGame]               = useState(null);
+  const [board, setBoard]             = useState(null);
+  const [selected, setSelected]       = useState(null);
+  const [errors, setErrors]           = useState(new Set());
+  const [solved, setSolved]           = useState(false);
+  const [mistakes, setMistakes]       = useState(0);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [hintsUsed, setHintsUsed]     = useState(0);
+  const [showVictory, setShowVictory] = useState(false);
 
-  const startNewGame = useCallback((diff = difficulty) => {
-    const newGame = generateGame(diff);
+  const { display: timerDisplay, reset: resetTimer, seconds } = useTimer(timerRunning && !solved);
+
+  const startNewGame = useCallback((diff) => {
+    const d = diff || difficulty;
+    const newGame = generateGame(d);
     setGame(newGame);
     setBoard(newGame.puzzle.map(r => [...r]));
     setSelected(null);
     setErrors(new Set());
     setSolved(false);
     setMistakes(0);
+    setHintsUsed(0);
+    setShowVictory(false);
     setTimerRunning(true);
     resetTimer();
   }, [difficulty, resetTimer]);
+
+  useEffect(() => { startNewGame('easy'); }, []);
 
   const handleDifficulty = (diff) => {
     setDifficulty(diff);
@@ -50,7 +59,7 @@ export default function Game() {
   };
 
   const handleInput = useCallback((num) => {
-    if (!selected || solved) return;
+    if (!selected || solved || !game) return;
     const [r, c] = selected.split(',').map(Number);
     if (game.puzzle[r][c] !== 0) return;
 
@@ -68,215 +77,230 @@ export default function Game() {
     if (isSolved(newBoard, game.solution, game.size)) {
       setSolved(true);
       setTimerRunning(false);
+      setTimeout(() => setShowVictory(true), 500);
     }
   }, [selected, solved, board, game]);
 
+  const handleHint = useCallback(() => {
+    if (!game || solved) return;
+    const empties = [];
+    for (let r = 0; r < game.size; r++)
+      for (let c = 0; c < game.size; c++)
+        if (board[r][c] === 0) empties.push([r, c]);
+    if (empties.length === 0) return;
+    const [r, c] = empties[Math.floor(Math.random() * empties.length)];
+    const newBoard = board.map(row => [...row]);
+    newBoard[r][c] = game.solution[r][c];
+    const newErrors = checkConstraints(newBoard, game.hConstraints, game.vConstraints, game.size);
+    setErrors(newErrors);
+    setBoard(newBoard);
+    setHintsUsed(h => h + 1);
+    setSelected(`${r},${c}`);
+    if (isSolved(newBoard, game.solution, game.size)) {
+      setSolved(true);
+      setTimerRunning(false);
+      setTimeout(() => setShowVictory(true), 500);
+    }
+  }, [game, board, solved]);
+
   useEffect(() => {
     const handleKey = (e) => {
+      if (!game) return;
       const n = parseInt(e.key);
       if (!isNaN(n) && n >= 0 && n <= game.size) handleInput(n);
       if (e.key === 'Backspace' || e.key === 'Delete') handleInput(0);
       if (e.key === 'Escape') setSelected(null);
+      if (e.key === 'h' || e.key === 'H') handleHint();
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handleInput, game.size]);
+  }, [handleInput, handleHint, game]);
+
+  if (!game || !board) return null;
 
   const { puzzle, hConstraints, vConstraints, size } = game;
 
   return (
-    <div className="min-h-screen bg-[#0f0e17] text-white flex flex-col items-center justify-start py-8 px-4 font-mono">
-      {/* Header */}
-      <div className="mb-6 text-center">
-        <h1 className="text-4xl font-bold tracking-widest text-[#ff8906] uppercase mb-1">
-          Futoshiki
-        </h1>
-        <p className="text-[#a7a9be] text-sm tracking-widest uppercase">
-          Puzzle de desigualdades
-        </p>
-      </div>
+    <>
+      {/* Animated gradient background */}
+      <div className="bg-mesh" />
 
-      {/* Difficulty selector */}
-      <div className="flex gap-2 mb-6">
-        {Object.entries(DIFFICULTY_LABELS).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => handleDifficulty(key)}
-            className={`px-4 py-1.5 rounded text-sm font-bold tracking-widest uppercase transition-all border ${
-              difficulty === key
-                ? 'bg-[#ff8906] text-[#0f0e17] border-[#ff8906]'
-                : 'bg-transparent text-[#a7a9be] border-[#a7a9be] hover:border-[#ff8906] hover:text-[#ff8906]'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '36px', paddingBottom: '48px' }}>
 
-      {/* Stats bar */}
-      <div className="flex gap-8 mb-6 text-sm tracking-widest">
-        <div className="text-center">
-          <div className="text-[#a7a9be] uppercase text-xs mb-0.5">Tiempo</div>
-          <div className="text-[#ff8906] font-bold text-lg">{timerDisplay}</div>
+        {/* Logo / Title */}
+        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '14px', marginBottom: '6px' }}>
+            <div style={{ width: '36px', height: '1px', background: 'linear-gradient(90deg, transparent, var(--gold))' }} />
+            <span style={{ fontSize: '0.6rem', letterSpacing: '0.35em', color: 'var(--gold)', textTransform: 'uppercase', fontFamily: 'Cinzel, serif' }}>Creado por Ezequiel</span>
+            <div style={{ width: '36px', height: '1px', background: 'linear-gradient(90deg, var(--gold), transparent)' }} />
+          </div>
+          <h1 style={{ fontFamily: 'Cinzel, serif', fontSize: '3.2rem', fontWeight: 900, letterSpacing: '0.18em', margin: 0, lineHeight: 1,
+            background: 'linear-gradient(135deg, #c9a84c 0%, #e8c97a 40%, #c9a84c 70%, #a07830 100%)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            FUTOSHIKI
+          </h1>
+          <div className="gold-line" style={{ marginTop: '10px', maxWidth: '280px', margin: '10px auto 0' }} />
+          <p style={{ fontFamily: 'Crimson Pro, serif', fontStyle: 'italic', color: 'var(--muted)', fontSize: '0.88rem', marginTop: '8px', letterSpacing: '0.08em' }}>
+            Puzzle de desigualdades japonés
+          </p>
         </div>
-        <div className="text-center">
-          <div className="text-[#a7a9be] uppercase text-xs mb-0.5">Errores</div>
-          <div className={`font-bold text-lg ${mistakes > 0 ? 'text-[#e53170]' : 'text-white'}`}>
-            {mistakes}
+
+        {/* Difficulty pills */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+          {Object.entries(DIFFICULTY_LABELS).map(([key, label]) => (
+            <button key={key} className={`pill${difficulty === key ? ' active' : ''}`} onClick={() => handleDifficulty(key)}>
+              {label} <span style={{ opacity: 0.6, fontSize: '0.6rem' }}>{DIFFICULTY_DESC[key]}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Stat row */}
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+          <div className="stat-card">
+            <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Tiempo</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--gold-lt)', letterSpacing: '0.05em' }}>{timerDisplay}</div>
+          </div>
+          <div className="stat-card">
+            <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Errores</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: mistakes > 0 ? 'var(--danger)' : '#e8e6f0', letterSpacing: '0.05em' }}>{mistakes}</div>
+          </div>
+          <div className="stat-card">
+            <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Pistas</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: hintsUsed > 0 ? 'var(--gold)' : '#e8e6f0', letterSpacing: '0.05em' }}>{hintsUsed}</div>
           </div>
         </div>
+
+        {/* Board */}
+        <div style={{ marginBottom: '24px', padding: '20px', background: 'rgba(10,10,20,0.5)', borderRadius: '16px', border: '1px solid var(--rim)', boxShadow: '0 8px 48px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
+          <Board
+            board={board} puzzle={puzzle} size={size} selected={selected}
+            errors={errors} hConstraints={hConstraints} vConstraints={vConstraints}
+            onCellClick={handleCellClick} solved={solved}
+          />
+        </div>
+
+        {/* Number pad */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+          {[...Array(size)].map((_, i) => (
+            <button key={i + 1} className="num-btn" onClick={() => handleInput(i + 1)}>{i + 1}</button>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button className="btn-ghost" onClick={() => handleInput(0)}>✕ Borrar</button>
+          <button className="btn-ghost" onClick={handleHint} style={{ color: 'var(--gold)', borderColor: 'rgba(201,168,76,0.4)' }}>
+            ◆ Pista
+          </button>
+          <button className="btn-primary" onClick={() => startNewGame(difficulty)}>↻ Nuevo juego</button>
+        </div>
+
+        {/* Legend */}
+        <div style={{ marginTop: '28px', display: 'flex', gap: '20px', opacity: 0.55 }}>
+          <span style={{ fontSize: '0.62rem', letterSpacing: '0.1em', color: 'var(--ember)', fontFamily: 'Crimson Pro, serif', fontStyle: 'italic' }}>
+            &lt; &gt; restricción horizontal
+          </span>
+          <span style={{ fontSize: '0.62rem', letterSpacing: '0.1em', color: 'var(--success)', fontFamily: 'Crimson Pro, serif', fontStyle: 'italic' }}>
+            ∧ ∨ restricción vertical
+          </span>
+        </div>
       </div>
 
-      {/* Board */}
-      <div className="relative mb-6">
-        <Board
-          board={board}
-          puzzle={puzzle}
-          size={size}
-          selected={selected}
-          errors={errors}
-          hConstraints={hConstraints}
-          vConstraints={vConstraints}
-          onCellClick={handleCellClick}
-          solved={solved}
-        />
-      </div>
-
-      {/* Number pad */}
-      <NumberPad size={size} onInput={handleInput} />
-
-      {/* Actions */}
-      <div className="flex gap-3 mt-5">
-        <button
-          onClick={() => handleInput(0)}
-          className="px-5 py-2 rounded border border-[#a7a9be] text-[#a7a9be] text-sm tracking-widest uppercase hover:border-white hover:text-white transition-all"
-        >
-          Borrar
-        </button>
-        <button
-          onClick={() => startNewGame(difficulty)}
-          className="px-5 py-2 rounded border border-[#ff8906] text-[#ff8906] text-sm tracking-widest uppercase hover:bg-[#ff8906] hover:text-[#0f0e17] transition-all font-bold"
-        >
-          Nuevo juego
-        </button>
-      </div>
-
-      {/* Solved banner */}
-      {solved && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-fade-in">
-          <div className="bg-[#1a1a2e] border-2 border-[#ff8906] rounded-2xl p-10 text-center shadow-2xl">
-            <div className="text-5xl mb-3">🎉</div>
-            <h2 className="text-3xl font-bold text-[#ff8906] mb-2 tracking-widest uppercase">
-              ¡Resuelto!
+      {/* Victory modal */}
+      {showVictory && (
+        <div className="modal-overlay" onClick={() => setShowVictory(false)}>
+          <div className="modal-box rise-in" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '3rem', marginBottom: '8px' }}>✦</div>
+            <h2 style={{ fontFamily: 'Cinzel, serif', fontSize: '2rem', fontWeight: 900, letterSpacing: '0.15em',
+              background: 'linear-gradient(135deg, #c9a84c, #e8c97a, #c9a84c)',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: '0 0 6px' }}>
+              RESUELTO
             </h2>
-            <p className="text-[#a7a9be] mb-1">Tiempo: <span className="text-white font-bold">{timerDisplay}</span></p>
-            <p className="text-[#a7a9be] mb-6">Errores: <span className={`font-bold ${mistakes > 0 ? 'text-[#e53170]' : 'text-[#2cb67d]'}`}>{mistakes}</span></p>
-            <button
-              onClick={() => startNewGame(difficulty)}
-              className="px-8 py-3 bg-[#ff8906] text-[#0f0e17] font-bold rounded-lg tracking-widest uppercase hover:brightness-110 transition-all"
-            >
-              Jugar de nuevo
+            <div className="gold-line" style={{ marginBottom: '24px' }} />
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginBottom: '28px' }}>
+              <div style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: '10px', padding: '12px 20px', minWidth: '80px' }}>
+                <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Tiempo</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--gold-lt)' }}>{timerDisplay}</div>
+              </div>
+              <div style={{ background: 'rgba(229,49,112,0.08)', border: '1px solid rgba(229,49,112,0.2)', borderRadius: '10px', padding: '12px 20px', minWidth: '80px' }}>
+                <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Errores</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: mistakes === 0 ? 'var(--success)' : 'var(--danger)' }}>{mistakes}</div>
+              </div>
+              <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.15)', borderRadius: '10px', padding: '12px 20px', minWidth: '80px' }}>
+                <div style={{ fontSize: '0.55rem', letterSpacing: '0.18em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Pistas</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: hintsUsed === 0 ? 'var(--success)' : 'var(--gold)' }}>{hintsUsed}</div>
+              </div>
+            </div>
+
+            {mistakes === 0 && hintsUsed === 0 && (
+              <p style={{ fontFamily: 'Crimson Pro, serif', fontStyle: 'italic', color: 'var(--gold)', fontSize: '0.9rem', marginBottom: '20px', opacity: 0.9 }}>
+                ✦ Solución perfecta — sin errores ni pistas ✦
+              </p>
+            )}
+
+            <button className="btn-primary" style={{ padding: '12px 36px', fontSize: '0.78rem' }} onClick={() => startNewGame(difficulty)}>
+              ↻ Jugar de nuevo
             </button>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 function Board({ board, puzzle, size, selected, errors, hConstraints, vConstraints, onCellClick, solved }) {
+  const selRow = selected ? parseInt(selected.split(',')[0]) : -1;
+  const selCol = selected ? parseInt(selected.split(',')[1]) : -1;
+
   return (
-    <div className="inline-block">
+    <div>
       {board.map((row, r) => (
         <div key={r}>
-          {/* Row of cells + horizontal constraints */}
-          <div className="flex items-center">
+          <div style={{ display: 'flex', alignItems: 'center' }}>
             {row.map((val, c) => {
               const key = `${r},${c}`;
-              const isSelected = selected === key;
-              const isError = errors.has(key);
-              const isGiven = puzzle[r][c] !== 0;
-              const isHighlighted = selected && !isSelected && (
-                selected.split(',')[0] === String(r) ||
-                selected.split(',')[1] === String(c)
-              );
-              const hKey = `${r},${c}`;
-              const hOp = hConstraints[hKey];
+              const isSelected   = selected === key;
+              const isError      = errors.has(key);
+              const isGiven      = puzzle[r][c] !== 0;
+              const isHighlighted = !isSelected && (r === selRow || c === selCol);
+              const hOp = hConstraints[`${r},${c}`];
+
+              let cls = 'cell';
+              if (isSelected)    cls += ' selected';
+              else if (isError)  cls += ' error';
+              else if (isHighlighted) cls += ' highlighted';
+              if (isGiven)       cls += ' given';
+              if (solved && !isError) cls += ' solved-ok';
 
               return (
-                <div key={c} className="flex items-center">
-                  {/* Cell */}
-                  <div
-                    onClick={() => onCellClick(r, c)}
-                    className={`
-                      w-12 h-12 flex items-center justify-center text-xl font-bold rounded cursor-pointer
-                      border-2 transition-all select-none
-                      ${isSelected
-                        ? 'border-[#ff8906] bg-[#ff8906]/20 text-[#ff8906]'
-                        : isError
-                          ? 'border-[#e53170] bg-[#e53170]/10 text-[#e53170]'
-                          : isHighlighted
-                            ? 'border-[#a7a9be]/40 bg-white/5 text-white'
-                            : 'border-[#2e2e4a] bg-[#1a1a2e] text-white hover:border-[#a7a9be]/60'
-                      }
-                      ${isGiven ? 'text-[#ff8906] opacity-90' : ''}
-                      ${solved && !isError ? 'border-[#2cb67d]/40' : ''}
-                    `}
-                  >
+                <div key={c} style={{ display: 'flex', alignItems: 'center' }}>
+                  <div className={cls} onClick={() => onCellClick(r, c)}>
                     {val !== 0 ? val : ''}
                   </div>
-
-                  {/* Horizontal constraint */}
                   {c < size - 1 && (
-                    <div className="w-7 text-center text-[#e53170] font-bold text-sm select-none">
-                      {hOp || ''}
-                    </div>
+                    <div className="h-constraint">{hOp || ''}</div>
                   )}
                 </div>
               );
             })}
           </div>
 
-          {/* Vertical constraints row */}
           {r < size - 1 && (
-            <div className="flex items-center">
-              {row.map((_, c) => {
-                const vKey = `${r},${c}`;
-                const vOp = vConstraints[vKey];
-                const hKey = `${r},${c}`;
-                const hOp = hConstraints[hKey];
-
-                return (
-                  <div key={c} className="flex items-center">
-                    <div className="w-12 h-6 flex items-center justify-center text-[#2cb67d] font-bold text-sm select-none">
-                      {vOp
-                        ? (vOp === '<' ? '∧' : '∨')
-                        : ''}
-                    </div>
-                    {c < size - 1 && <div className="w-7" />}
+            <div style={{ display: 'flex' }}>
+              {row.map((_, c) => (
+                <div key={c} style={{ display: 'flex', alignItems: 'center' }}>
+                  <div className="v-constraint" style={{ width: '52px' }}>
+                    {vConstraints[`${r},${c}`]
+                      ? (vConstraints[`${r},${c}`] === '<' ? '∧' : '∨')
+                      : ''}
                   </div>
-                );
-              })}
+                  {c < size - 1 && <div style={{ width: '28px' }} />}
+                </div>
+              ))}
             </div>
           )}
         </div>
-      ))}
-    </div>
-  );
-}
-
-function NumberPad({ size, onInput }) {
-  return (
-    <div className="flex gap-2">
-      {[...Array(size)].map((_, i) => (
-        <button
-          key={i + 1}
-          onClick={() => onInput(i + 1)}
-          className="w-11 h-11 rounded-lg border-2 border-[#2e2e4a] bg-[#1a1a2e] text-white font-bold text-lg
-            hover:border-[#ff8906] hover:text-[#ff8906] transition-all active:scale-95"
-        >
-          {i + 1}
-        </button>
       ))}
     </div>
   );
